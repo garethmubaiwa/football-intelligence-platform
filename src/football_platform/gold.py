@@ -14,6 +14,9 @@ import pandas as pd
 def build_gold(silver_root: Path, gold_db_path: Path) -> dict:
     df = pd.read_parquet(silver_root / "player_season_stats.parquet")
 
+    # Ensure the Gold output directory exists in clean CI environments.
+    gold_db_path.parent.mkdir(parents=True, exist_ok=True)
+
     conn = duckdb.connect(str(gold_db_path))
     conn.execute("DROP TABLE IF EXISTS fact_player_season_stats")
     conn.execute("DROP TABLE IF EXISTS dim_player")
@@ -50,35 +53,76 @@ def build_gold(silver_root: Path, gold_db_path: Path) -> dict:
     player_names = (
         df.sort_values("season")
         .groupby("code")
-        .agg(web_name=("web_name", "last"), first_name=("first_name", "last"),
-             second_name=("second_name", "last"))
+        .agg(
+            web_name=("web_name", "last"),
+            first_name=("first_name", "last"),
+            second_name=("second_name", "last"),
+        )
         .reset_index()
     )
     player_names["player_key"] = range(1, len(player_names) + 1)
-    dim_player = player_names[["player_key", "code", "web_name", "first_name", "second_name"]]
+    dim_player = player_names[
+        ["player_key", "code", "web_name", "first_name", "second_name"]
+    ]
     conn.execute("CREATE TABLE dim_player AS SELECT * FROM dim_player")
 
     # fact_player_season_stats: fact table with foreign keys to all dims, plus all raw stats
-    fact = df.merge(dim_player[["code", "player_key"]], on="code", how="left")
+    fact = df.merge(
+        dim_player[["code", "player_key"]],
+        on="code",
+        how="left",
+    )
     fact = fact.merge(dim_team, on="team_name", how="left")
-    fact = fact.merge(dim_season[["season", "season_key"]], on="season", how="left")
     fact = fact.merge(
-        dim_position.rename(columns={"position_code": "position"})[["position", "position_key"]],
-        on="position", how="left",
+        dim_season[["season", "season_key"]],
+        on="season",
+        how="left",
+    )
+    fact = fact.merge(
+        dim_position.rename(columns={"position_code": "position"})[
+            ["position", "position_key"]
+        ],
+        on="position",
+        how="left",
     )
 
     fact_cols = [
-        "player_key", "team_key", "season_key", "position_key",
-        "minutes", "starts", "goals_scored", "assists", "clean_sheets",
-        "goals_conceded", "own_goals", "yellow_cards", "red_cards", "saves",
-        "penalties_missed", "penalties_saved", "bonus", "bps",
-        "influence", "creativity", "threat", "ict_index",
-        "now_cost", "selected_by_percent", "total_points", "points_per_game",
-        "expected_goals", "expected_assists", "expected_goal_involvements",
+        "player_key",
+        "team_key",
+        "season_key",
+        "position_key",
+        "minutes",
+        "starts",
+        "goals_scored",
+        "assists",
+        "clean_sheets",
+        "goals_conceded",
+        "own_goals",
+        "yellow_cards",
+        "red_cards",
+        "saves",
+        "penalties_missed",
+        "penalties_saved",
+        "bonus",
+        "bps",
+        "influence",
+        "creativity",
+        "threat",
+        "ict_index",
+        "now_cost",
+        "selected_by_percent",
+        "total_points",
+        "points_per_game",
+        "expected_goals",
+        "expected_assists",
+        "expected_goal_involvements",
     ]
+
     fact_table = fact[fact_cols].reset_index(drop=True)
     fact_table.insert(0, "fact_id", range(1, len(fact_table) + 1))
-    conn.execute("CREATE TABLE fact_player_season_stats AS SELECT * FROM fact_table")
+    conn.execute(
+        "CREATE TABLE fact_player_season_stats AS SELECT * FROM fact_table"
+    )
 
     # report counts of rows in each table, and orphaned fact rows (no matching player)
     orphans = conn.execute("""
@@ -94,5 +138,6 @@ def build_gold(silver_root: Path, gold_db_path: Path) -> dict:
         "fact_rows": len(fact_table),
         "orphaned_fact_rows": orphans,
     }
+
     conn.close()
     return counts
