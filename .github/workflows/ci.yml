@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+  pull_request:
+    branches:
+      - main
+      - master
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Pipeline and tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Run pipeline
+        run: |
+          python run_pipeline.py
+
+      - name: Run tests
+        run: |
+          python -m pytest tests/ -v
+
+      - name: Export Power BI data
+        run: |
+          python export_powerbi.py
+
+      - name: Validate DAX measures
+        run: |
+          python dax/validate_dax_measures.py
