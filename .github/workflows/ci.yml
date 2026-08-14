@@ -36,6 +36,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .
 
+      - name: Acquire raw data
+        run: |
+          python scripts/download_data.py
+
       - name: Run pipeline
         run: |
           python run_pipeline.py
