@@ -1,0 +1,50 @@
+name: football-intelligence-platform
+
+services:
+
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./data:/app/data
+      - ./powerbi_export:/app/powerbi_export
+    command:
+      - python
+      - run_pipeline.py
+
+  export:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./data:/app/data
+      - ./powerbi_export:/app/powerbi_export
+    command:
+      - python
+      - export_powerbi.py
+
+  dax:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./data:/app/data
+      - ./powerbi_export:/app/powerbi_export
+    command:
+      - python
+      - dax/validate_dax_measures.py
+
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./data:/app/data
+      - ./powerbi_export:/app/powerbi_export
+    command:
+      - python
+      - -m
+      - pytest
+      - tests/
+      - -v
