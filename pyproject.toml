@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "football-intelligence-platform"
+version = "0.1.0"
+description = "End-to-end football data intelligence platform using real Premier League data"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "pandas>=2.2,<3",
+    "duckdb>=1.1,<2",
+    "scikit-learn>=1.5,<2",
+    "pyarrow>=18,<24",
+    "pytest>=8,<9"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

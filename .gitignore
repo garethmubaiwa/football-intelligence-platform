@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated data
+data/raw/*
+data/bronze/*
+data/silver/*
+data/gold/*
+
+# Generated Power BI exports
+powerbi_export/*
+
+# Keep directory structure
+!data/.gitkeep
+!powerbi_export/.gitkeep
+
+# DuckDB / analytical artifacts
+*.duckdb
+*.duckdb.wal
+
+# Logs
+*.log
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
