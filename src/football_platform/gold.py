@@ -1,6 +1,10 @@
 """
-Gold layer: star schema warehouse built from 5 seasons of real Premier League data.
+    Gold layer: star schema warehouse built from 5 seasons of real Premier League data.
     dim_team is keyed by TEAM NAME (the canonical, stable entity) precisely because raw team `id` is reassigned every season.
+    dim_player is keyed by PLAYER CODE (the canonical, stable entity) because player `id` is also reassigned every season.
+    dim_season is keyed by SEASON (the canonical, stable entity) because season-relative `id` is also reassigned every season.
+    dim_position is keyed by POSITION CODE (the canonical, stable entity) because position `id` is also reassigned every season.
+    fact_player_season_stats is the fact table with foreign keys to all dims, plus all raw stats.
 """
 
 from __future__ import annotations
@@ -12,6 +16,9 @@ import pandas as pd
 
 
 def build_gold(silver_root: Path, gold_db_path: Path) -> dict:
+    '''
+    Build the gold layer from the silver layer, and return a summary dict with counts of rows in each table.
+    '''
     df = pd.read_parquet(silver_root / "player_season_stats.parquet")
 
     # Ensure the Gold output directory exists in clean CI environments.
@@ -24,7 +31,7 @@ def build_gold(silver_root: Path, gold_db_path: Path) -> dict:
     conn.execute("DROP TABLE IF EXISTS dim_season")
     conn.execute("DROP TABLE IF EXISTS dim_position")
 
-    # ---- dim_position ----
+    # dim_position: one row per position, keyed by position_code (GK, DEF, MID, FWD)
     dim_position = pd.DataFrame(
         [(1, "GK", "Goalkeeper"), (2, "DEF", "Defender"),
          (3, "MID", "Midfielder"), (4, "FWD", "Forward")],
@@ -125,18 +132,20 @@ def build_gold(silver_root: Path, gold_db_path: Path) -> dict:
     )
 
     # report counts of rows in each table, and orphaned fact rows (no matching player)
-    orphans = conn.execute("""
+    orphan_row = conn.execute("""
         SELECT COUNT(*) FROM fact_player_season_stats f
         LEFT JOIN dim_player p ON f.player_key = p.player_key
         WHERE p.player_key IS NULL
-    """).fetchone()[0]
+    """).fetchone()
+    orphans = orphan_row[0] if orphan_row is not None else 0
 
     counts = {
-        "dim_player_rows": len(dim_player),
-        "dim_team_rows": len(dim_team),
-        "dim_season_rows": len(dim_season),
-        "fact_rows": len(fact_table),
-        "orphaned_fact_rows": orphans,
+    "dim_player_rows": len(dim_player),
+    "dim_team_rows": len(dim_team),
+    "dim_season_rows": len(dim_season),
+    "dim_position_rows": len(dim_position),
+    "fact_rows": len(fact_table),
+    "orphaned_fact_rows": orphans,
     }
 
     conn.close()

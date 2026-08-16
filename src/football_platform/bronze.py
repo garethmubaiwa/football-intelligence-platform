@@ -12,6 +12,10 @@ SEASONS = ["2019-20", "2020-21", "2021-22", "2022-23", "2023-24"]
 
 
 def ingest_season(season: str, raw_root: Path, bronze_root: Path) -> dict:
+    '''
+    Ingest one season's raw CSVs into the bronze layer, and return a manifest dictdescribing the ingestion.
+    The manifest includes the season, ingestion timestamp, list of files copied, and source URL.
+    '''
     src_dir = raw_root / season
     dst_dir = bronze_root / season
     dst_dir.mkdir(parents=True, exist_ok=True)

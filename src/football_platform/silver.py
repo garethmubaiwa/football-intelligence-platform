@@ -15,8 +15,9 @@ from pathlib import Path
 
 import pandas as pd
 
+# Position mapping from FPL's element_type to human-readable position names.
 POSITION_MAP = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
-
+# Columns that are expected to exist in all seasons' player data, with the exception of `starts` which was only added from 2022-23 onward.
 CORE_COLUMNS = [
     "code", "web_name", "first_name", "second_name", "element_type",
     "team", "minutes", "starts", "goals_scored", "assists", "clean_sheets",
@@ -30,15 +31,15 @@ CORE_COLUMNS = [
 XG_COLUMNS = ["expected_goals", "expected_assists", "expected_goal_involvements"]
 OPTIONAL_CORE_COLUMNS = ["starts"]
 
-
 def _season_to_years(season: str) -> tuple[int, int]:
-    start = int("20" + season[:2])
-    end = int("20" + season[-2:])
+    start = int(season[:4])
+    end = int(season[:4]) + 1
     return start, end
 
 
 def load_and_clean_season(season: str, bronze_root: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Returns (clean_rows, rejected_rows) for one season."""
+
     season_dir = bronze_root / season
     players = pd.read_csv(season_dir / "players_raw.csv")
     teams = pd.read_csv(season_dir / "teams.csv")[["id", "name"]].rename(columns={"id": "team", "name": "team_name"})
@@ -64,6 +65,7 @@ def load_and_clean_season(season: str, bronze_root: Path) -> tuple[pd.DataFrame,
     df["season"] = season
     start_year, end_year = _season_to_years(season)
     df["season_start_year"] = start_year
+    df["season_end_year"] = end_year
     df["position"] = df["element_type"].map(POSITION_MAP)
 
     # Filter out rows with invalid data (negative minutes, zero cost, missing position/team/code)
@@ -86,11 +88,16 @@ def load_and_clean_season(season: str, bronze_root: Path) -> tuple[pd.DataFrame,
 
 
 def build_silver(bronze_root: Path, silver_root: Path, seasons: list[str]) -> dict:
+    '''
+    Build the silver layer from the bronze layer for the given seasons.
+    Returns a summary dict with counts of clean and rejected rows.
+    '''
     silver_root.mkdir(parents=True, exist_ok=True)
     all_clean = []
     all_rejected = []
     per_season_counts = {}
 
+    # Process each season individually, then combine the clean rows into one DataFrame for the silver layer.
     for season in seasons:
         clean, rejected = load_and_clean_season(season, bronze_root)
         all_clean.append(clean)
