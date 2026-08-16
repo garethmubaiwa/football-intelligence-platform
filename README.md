@@ -6,7 +6,7 @@
 [![Docker](https://img.shields.io/badge/container-Docker-2496ED.svg)](https://www.docker.com/)
 [![Power BI](https://img.shields.io/badge/BI-Power%20BI-F2C811.svg)](https://powerbi.microsoft.com/)
 
-An end-to-end football data intelligence platform built on **real Premier League data**, demonstrating modern data engineering, analytical warehousing, feature engineering, machine learning, business intelligence, testing, containerization, and continuous integration.
+An end-to-end football data intelligence platform built on **real Premier League data**, demonstrating modern data engineering, analytical warehousing, feature engineering, machine learning, business intelligence, automated testing, containerization, and continuous integration.
 
 The platform processes **five real Premier League seasons (2019-20 through 2023-24)** sourced from the [Fantasy Premier League dataset maintained by vaastav](https://github.com/vaastav/Fantasy-Premier-League).
 
@@ -27,16 +27,20 @@ Real FPL Data
 │               │
 │ Raw source    │
 │ data          │
+│ Ingestion     │
+│ metadata      │
 └───────┬───────┘
         │
         ▼
 ┌───────────────┐
 │    SILVER     │
 │               │
-│ Schema fixes  │
-│ Validation    │
+│ Schema        │
+│ evolution     │
 │ Cleaning      │
+│ Validation    │
 │ Team mapping  │
+│ Rejected rows │
 └───────┬───────┘
         │
         ▼
@@ -47,44 +51,71 @@ Real FPL Data
 │ Star schema   │
 └───────┬───────┘
         │
-        ├───────────────┐
-        │               │
-        ▼               ▼
-┌───────────────┐ ┌───────────────┐
-│  FEATURES     │ │      ML       │
-│               │ │               │
-│ Trends        │ │ Clustering    │
-│ Multi-season  │ │ Outliers      │
-│ statistics    │ │               │
-└───────┬───────┘ └───────┬───────┘
-        │                 │
-        └────────┬────────┘
-                 ▼
-        ┌──────────────────┐
-        │    POWER BI      │
-        │                  │
-        │ CSV exports      │
-        │ DAX measures     │
-        └──────────────────┘
+        ▼
+┌───────────────┐
+│   FEATURES    │
+│               │
+│ Per-90 rates  │
+│ Value metrics │
+│ xG/xA residual│
+│ Trends        │
+│ Consistency   │
+└───────┬───────┘
+        │
+        ▼
+┌───────────────┐
+│      ML       │
+│               │
+│ K-Means       │
+│ Archetypes    │
+│ Hidden gems   │
+│ Overperformers│
+└───────┬───────┘
+        │
+        ▼
+┌──────────────────┐
+│    POWER BI      │
+│                  │
+│ CSV exports      │
+│ DAX measures     │
+│ Dashboards       │
+└──────────────────┘
 
-                 +
+            +
 
-        ┌──────────────────┐
-        │     TESTING      │
-        │                  │
-        │ pytest           │
-        │ Data validation  │
-        │ Real-world facts │
-        └──────────────────┘
+┌──────────────────┐
+│     TESTING      │
+│                  │
+│ Unit tests       │
+│ Integration      │
+│ Regression       │
+│ Smoke tests      │
+│ Real-world facts │
+└──────────────────┘
 ```
+
+The important architectural boundary is:
+
+```text
+Bronze → Silver → Gold → Features → ML → BI
+```
+
+Each layer has a distinct responsibility.
 
 ---
 
 # Why this project exists
 
-This project was built to demonstrate several areas of practical data engineering and analytics that are difficult to show using toy datasets.
+This project was built to demonstrate practical data engineering and analytics using a real historical dataset rather than a clean toy dataset.
 
-The pipeline intentionally works with historical data that changes shape over time, contains real-world modelling traps, and requires downstream analytical validation.
+The pipeline deliberately works with data that:
+
+* changes schema over time
+* contains season-relative identifiers
+* requires historical validation
+* needs analytical feature engineering
+* supports machine-learning analysis
+* must remain reproducible and testable
 
 The project therefore focuses on:
 
@@ -93,7 +124,7 @@ The project therefore focuses on:
 * dimensional modelling
 * historical accuracy
 * automated testing
-* analytical feature engineering
+* feature engineering
 * machine learning
 * business intelligence
 * containerization
@@ -136,45 +167,29 @@ The current pipeline processes:
 * 2022-23
 * 2023-24
 
-The project deliberately downloads and processes source data through the pipeline rather than manually curating analytical outputs.
+The source data is processed through the pipeline rather than manually curating analytical outputs.
 
 This keeps the workflow reproducible and makes it possible to rebuild the warehouse from source data.
 
 ---
 
-# The three real bugs discovered and fixed
+# Real-world data problems discovered
 
-One of the main purposes of the project was to work through problems that actually appear when working with historical production-like data.
-
-These were not hypothetical examples.
-
-They were found while running the pipeline against the real historical dataset.
+The project intentionally protects against several problems discovered while working with the historical source data.
 
 ---
 
-## 1. Schema evolution: `expected_goals`
+## 1. Schema evolution: `expected_goals`, `expected_assists`, and related xG fields
 
-The dataset does not contain Expected Goals (`expected_goals`) consistently across all five historical seasons.
+Expected-goals fields are not available consistently across all five seasons.
 
-A pipeline that assumes the column exists everywhere fails as soon as it processes an older season.
-
-### Original problem
-
-A transformation attempted to select:
-
-```text
-expected_goals
-```
-
-for every season.
-
-Historical seasons without that field caused the pipeline to fail.
+A pipeline that assumes those columns exist everywhere would fail when processing older data.
 
 ### Solution
 
-The Silver layer now checks the schema of each season before selecting expected columns.
+The Silver layer checks each season's schema before selecting the expected fields.
 
-If a column does not exist, it is explicitly created as a null field.
+If a column is unavailable, it is explicitly created as a null column.
 
 Conceptually:
 
@@ -186,35 +201,29 @@ Column exists
     └── No  → create NULL column
 ```
 
-This is intentionally **not converted to zero**.
-
-Missing data means:
+The missing value is deliberately **not converted to zero**.
 
 ```text
-"We do not have this measurement."
-```
+NULL
+=
+"The source did not provide this measurement."
 
-Zero means:
-
-```text
+0
+=
 "The measurement exists and its value is zero."
 ```
 
-Those are analytically different meanings.
+Those meanings are analytically different.
+
+The Feature Engineering and ML layers preserve this distinction. Older seasons without xG/xA do not receive fabricated overperformance scores.
 
 ---
 
-# 2. Schema evolution: `starts`
+## 2. Schema evolution: `starts`
 
-While executing the pipeline across all five seasons, a second historical schema difference was discovered.
+The `starts` field also differs across historical seasons.
 
-The `starts` field is also unavailable in some earlier seasons.
-
-The initial problem was specific-column handling.
-
-The improved solution is generalized.
-
-Instead of hard-coding special cases for only `expected_goals`, the Silver layer now checks the entire expected schema against the actual schema available for each season.
+The Silver layer therefore treats missing expected columns consistently rather than hard-coding a separate transformation for every known historical change.
 
 Conceptually:
 
@@ -232,37 +241,29 @@ season schema
               └── create explicit NULL
 ```
 
-This makes the pipeline safer against further historical schema changes.
+This provides a more resilient Silver layer as the historical source schema changes.
 
 ---
 
-# 3. FPL team IDs are not stable historical keys
+## 3. FPL team IDs are not stable historical keys
 
-The most important modelling issue discovered was the handling of team IDs.
+A raw FPL team ID should not automatically be treated as a permanent club identifier across seasons.
 
-A raw FPL team ID should **not** automatically be treated as a permanent club key across seasons.
+The same source ID can represent different clubs in different seasons.
 
-Historical source data can reuse team IDs for different clubs in different seasons.
-
-That means this design is unsafe:
+Therefore, this is unsafe as a global historical model:
 
 ```text
 dim_team
 ---------
-team_id = source FPL team ID
+team_id = raw FPL team ID
 ```
 
-as a global historical key.
+### Solution
 
-If that assumption is made, player-team history can become silently corrupted.
+The Silver layer resolves the team ID using the **teams.csv belonging to that same season**.
 
----
-
-## Solution
-
-The Silver layer joins each player's team ID to the team metadata from **that same season**.
-
-The resolved team name is then used to identify the actual club entity before the warehouse is constructed.
+The resolved team name is then used as the canonical club identity for Gold modelling.
 
 Conceptually:
 
@@ -276,74 +277,92 @@ Season-specific teams.csv
 Resolve team ID → team name
        │
        ▼
-Stable club identity
-       │
-       ▼
-Gold warehouse
+Gold team dimension
 ```
 
-This prevents a source-system identifier from being incorrectly treated as a universal business key.
+This prevents a season-relative source identifier from becoming a permanently incorrect historical key.
 
 ---
 
-# Historical transfer validation
+# Historical transfer regression test
 
-The team-key issue is protected by an automated regression test based on a real transfer.
+The team-key issue is protected by an automated regression test using a real transfer.
 
 The warehouse correctly represents:
 
 ```text
+2020-21
 Aston Villa
-     │
-     │ summer 2021
-     ▼
+
+        ↓
+    Summer 2021
+
+2021-22
 Manchester City
 ```
 
 for **Jack Grealish**.
 
-This verifies that the team-resolution logic survives the season boundary correctly.
+This verifies that the season-specific team resolution survives the season boundary correctly.
 
-The test is deliberately based on a real-world football event rather than merely checking that rows exist.
+The regression test is based on a real football event rather than simply checking that rows exist.
 
 ---
 
-# Independent real-world validation
+# Independent historical validation
 
-The platform validates calculated results against publicly known Premier League outcomes.
+The project also validates warehouse-derived results against known Premier League outcomes.
 
-The warehouse-derived top scorer for each processed season matches the known league result:
+The official Premier League records list the following Golden Boot winners for the processed seasons:
 
-| Season  | Top scorer      |
-| ------- | --------------- |
-| 2019-20 | Kevin De Bruyne |
-| 2020-21 | Bruno Fernandes |
-| 2021-22 | Mohamed Salah   |
-| 2022-23 | Erling Haaland  |
-| 2023-24 | Cole Palmer     |
+| Season  | Golden Boot                     |
+| ------- | ------------------------------- |
+| 2019-20 | Jamie Vardy                     |
+| 2020-21 | Harry Kane                      |
+| 2021-22 | Mohamed Salah and Son Heung-min |
+| 2022-23 | Erling Haaland                  |
+| 2023-24 | Erling Haaland                  |
 
-These values are derived from the pipeline's warehouse rather than manually inserted into the dataset.
-
-This provides an external sanity check that the transformation logic has not silently corrupted the historical records.
+These are used as external sanity checks rather than being inserted into the analytical dataset.
 
 ---
 
 # Architecture
 
-The platform follows a classic medallion architecture.
+The platform follows a medallion-style architecture followed by feature engineering and machine learning.
 
-## Bronze
+```text
+Bronze
+  ↓
+Silver
+  ↓
+Gold
+  ↓
+Feature Engineering
+  ↓
+Machine Learning
+  ↓
+Power BI / downstream analysis
+```
+
+---
+
+# Bronze
 
 The Bronze layer preserves raw source data as downloaded.
 
-Purpose:
+### Responsibilities
 
 * source traceability
-* reproducibility
 * raw-data preservation
-* separation of ingestion from transformation
+* reproducibility
+* ingestion metadata
+* basic arrival/readability checks
+* ingestion logging
 
-Location:
+Bronze does not perform analytical transformations.
+
+Typical location:
 
 ```text
 data/bronze/<season>/
@@ -351,20 +370,20 @@ data/bronze/<season>/
 
 ---
 
-## Silver
+# Silver
 
-The Silver layer performs the main historical data-quality and schema work.
+The Silver layer produces clean, conforming player-season data.
 
-Responsibilities include:
+### Responsibilities
 
 * schema validation
 * schema evolution handling
 * missing-column handling
-* season-aware team resolution
-* cleaning
-* type standardization
+* season-specific team resolution
+* data-quality validation
+* duplicate detection
 * rejected-row handling
-* validation
+* standardized structure
 
 Primary output:
 
@@ -372,19 +391,21 @@ Primary output:
 data/silver/player_season_stats.parquet
 ```
 
+The Silver dataset represents a consistent player-season structure across the five historical seasons.
+
 ---
 
-## Gold
+# Gold
 
 The Gold layer is the analytical warehouse.
 
-The warehouse is stored in DuckDB:
+The warehouse is stored in:
 
 ```text
 data/gold/warehouse.duckdb
 ```
 
-The Gold layer contains a star schema designed for downstream analytics and BI.
+The Gold layer contains a star schema designed for analytical queries, BI, and downstream feature engineering.
 
 ---
 
@@ -394,33 +415,38 @@ The Gold layer contains a star schema designed for downstream analytics and BI.
 
 ### `dim_player`
 
-One record per player.
+One row per unique player code.
 
-Contains the stable player attributes needed for analytical joins.
+Contains the player attributes used by analytical joins.
 
 ---
 
 ### `dim_team`
 
-One record per club.
+One row per canonical club identity.
 
-The club identity is resolved from season-specific source metadata rather than blindly using raw FPL team IDs as global keys.
+The team entity is resolved from season-specific source metadata rather than blindly treating the raw FPL team ID as a global historical key.
 
 ---
 
 ### `dim_season`
 
-One record per football season.
+One row per football season.
 
-Used for season-level filtering, relationships, and historical analysis.
+Used for historical filtering and relationships.
 
 ---
 
 ### `dim_position`
 
-One record per position category.
+One row per position category:
 
-Used for player segmentation and analytical grouping.
+```text
+GK
+DEF
+MID
+FWD
+```
 
 ---
 
@@ -428,29 +454,41 @@ Used for player segmentation and analytical grouping.
 
 ### `fact_player_season_stats`
 
-The central analytical fact table contains player-season-level statistics.
+The central analytical fact table contains player-season statistics.
 
 Conceptually:
 
 ```text
 fact_player_season_stats
 │
+├── fact_id
 ├── player_key
 ├── team_key
 ├── season_key
 ├── position_key
 ├── minutes
-├── appearances
 ├── starts
-├── goals
+├── goals_scored
 ├── assists
 ├── clean_sheets
+├── goals_conceded
+├── saves
+├── bonus
+├── bps
+├── influence
+├── creativity
+├── threat
+├── ict_index
+├── now_cost
+├── selected_by_percent
+├── total_points
+├── points_per_game
 ├── expected_goals
 ├── expected_assists
-└── other season-level measures
+└── expected_goal_involvements
 ```
 
-This creates a consistent analytical grain:
+The analytical grain is:
 
 ```text
 one player
@@ -460,134 +498,255 @@ one season
 one fact record
 ```
 
-where the available historical source data supports the corresponding metric.
-
 ---
 
 # Feature engineering
 
-The project builds multi-season player features from the Gold warehouse.
+Feature Engineering reads from the Gold warehouse and creates the variables required by the ML layer.
 
-Examples include:
+It does **not** create fictitious metrics that are unavailable in the source data.
 
-* historical output
-* multi-season trends
-* performance changes
-* scoring metrics
-* creative metrics
-* playing-time measurements
-* season-over-season changes
-* feature combinations used by the ML pipeline
+The feature layer produces four main categories.
 
-The feature layer produces:
+## 1. Per-90 / rate features
+
+Examples:
 
 ```text
-data/gold/player_features.parquet
+goals_per_90
+assists_per_90
+clean_sheets_per_90
+saves_per_90
+bps_per_90
+influence_per_90
+creativity_per_90
+threat_per_90
+points_per_90
 ```
 
-These features form the bridge between traditional warehouse analytics and machine learning.
+These reduce the impact of different playing times when comparing players.
+
+---
+
+## 2. Value and market features
+
+Examples:
+
+```text
+cost_millions
+points_per_million
+```
+
+These are primarily used for hidden-gem analysis rather than playing-style clustering.
+
+---
+
+## 3. Actual-vs-expected features
+
+Where xG/xA is available:
+
+```text
+goals_minus_xg
+assists_minus_xa
+goals_minus_xg_per_90
+assists_minus_xa_per_90
+```
+
+Positive values indicate actual output above the relevant expected metric.
+
+Where xG/xA is unavailable historically, the corresponding features remain null rather than being fabricated as zero.
+
+---
+
+## 4. Historical trajectory and consistency
+
+Examples:
+
+```text
+points_per_game_prev_season
+points_per_game_yoy_change
+points_per_90_prev_season
+points_per_90_yoy_change
+points_consistency_std
+goals_per_90_trend_slope
+assists_per_90_trend_slope
+seasons_of_history
+```
+
+These features are calculated in chronological player order so that historical features only use information available up to that season.
 
 ---
 
 # Machine learning
 
-The ML layer uses scikit-learn to perform unsupervised player analysis.
+The ML layer consumes the Feature Engineering output.
 
-The workflow includes:
+It does not recalculate the feature definitions.
+
+The architecture is:
 
 ```text
-Gold warehouse
-      │
-      ▼
-Feature extraction
-      │
-      ▼
-Feature preparation
-      │
-      ▼
-Player representations
-      │
-      ▼
-Clustering
-      │
-      ▼
-Player archetypes
-      │
-      ▼
-Outlier detection
+Gold
+  ↓
+Feature Engineering
+  ↓
+ML feature DataFrame
+  ├── K-Means clustering
+  └── hidden-gem / overperformance scoring
 ```
-
-The purpose is not merely to demonstrate that clustering can be run.
-
-The goal is to create football-relevant groups that can be interpreted analytically.
-
-The resulting clusters separate different forward archetypes, including profiles resembling:
-
-### Finishing-focused forwards
-
-Examples include:
-
-* Erling Haaland
-* Callum Wilson
-* Alexander Isak
-* Chris Wood
-
-### More creative / all-round forward profiles
-
-Examples include:
-
-* Ollie Watkins
-* Gabriel Jesus
-* Cody Gakpo
-* Darwin Núñez
-
-This provides a useful sanity check that the engineered features capture meaningful football characteristics.
 
 ---
 
-# Hidden-talent / value-outlier detection
+## Player archetype clustering
 
-In addition to clustering, the ML layer identifies statistical outliers.
+The project uses **K-Means** to identify position-specific player archetypes.
 
-The intention is to surface players who may appear unusually strong or undervalued relative to the broader player population.
+Clustering is performed separately for:
 
-The output can be used as a starting point for:
+```text
+GK
+DEF
+MID
+FWD
+```
 
-* scouting-style analysis
-* recruitment analysis
-* transfer-value exploration
-* BI reporting
-* further player evaluation
+This is important because the statistical definition of a useful goalkeeper feature is different from that of a forward.
 
-The project deliberately treats the outlier score as an analytical signal rather than claiming it is a definitive recruitment model.
+Players must have at least:
+
+```text
+1,000 minutes
+```
+
+to participate in clustering.
+
+The model supports:
+
+```text
+3 to 5 clusters
+```
+
+with:
+
+```text
+4 clusters
+```
+
+as the default.
+
+The clustering features are based on the engineered features actually available from the Gold warehouse.
+
+Examples include:
+
+### Goalkeepers
+
+```text
+saves_per_90
+clean_sheets_per_90
+goals_conceded_per_90
+bps_per_90
+```
+
+### Defenders
+
+```text
+clean_sheets_per_90
+goals_per_90
+assists_per_90
+bps_per_90
+threat_per_90
+```
+
+### Midfielders
+
+```text
+goals_per_90
+assists_per_90
+creativity_per_90
+threat_per_90
+influence_per_90
+```
+
+### Forwards
+
+```text
+goals_per_90
+assists_per_90
+threat_per_90
+creativity_per_90
+bps_per_90
+```
+
+Before K-Means, the features are standardized using `StandardScaler`.
+
+---
+
+# Hidden-gem and overperformer detection
+
+The project also produces position-relative analytical scores.
+
+## Hidden gem
+
+A hidden gem is defined as a player combining:
+
+```text
+High points per million
++
+Low relative ownership
+```
+
+The score is calculated using position-relative z-scores.
+
+This prevents a cheap defender from being directly compared with an expensive forward.
+
+---
+
+## Overperformer
+
+Where xG/xA exists, overperformance is measured using:
+
+```text
+Goals - xG
+Assists - xA
+```
+
+The values are converted into position-relative z-scores.
+
+Players who significantly outperform their expected output receive stronger overperformance signals.
+
+For seasons without xG/xA data, no artificial overperformance value is assigned.
 
 ---
 
 # Power BI integration
 
-The project exports the analytical model into Power BI-ready CSV files.
+The project provides Power BI-ready analytical outputs.
 
-Output directory:
+The intended flow is:
+
+```text
+Source
+  ↓
+Bronze
+  ↓
+Silver
+  ↓
+Gold
+  ↓
+Features / ML
+  ↓
+Power BI export
+  ↓
+Dashboard
+```
+
+Power BI outputs are written to:
 
 ```text
 powerbi_export/
 ```
 
-The Power BI layer is designed around the Gold warehouse rather than raw source files.
-
-This provides a clean separation:
-
-```text
-Source data
-     ↓
-ETL / transformation
-     ↓
-Analytical warehouse
-     ↓
-Power BI export
-     ↓
-Dashboard
-```
+The BI layer consumes processed analytical outputs rather than raw source files.
 
 ---
 
@@ -599,59 +758,75 @@ Example DAX measures are documented in:
 dax/measures.md
 ```
 
-The project also includes a validation script:
+The project also includes:
 
 ```text
 dax/validate_dax_measures.py
 ```
 
-Run it with:
+Run:
 
 ```bash
 python dax/validate_dax_measures.py
 ```
 
-The goal is to compare BI-layer calculations against independently computed ground-truth results.
+The validation script compares BI calculations against independently derived ground-truth results where applicable.
 
 ---
 
 # Testing
 
-Testing is a core part of the project rather than an afterthought.
+Testing is a core part of the project.
 
-The test suite is implemented with pytest.
+The suite uses pytest and includes several test levels.
 
-Run:
+### Unit tests
+
+Test individual functions and rules such as:
+
+* cluster-count validation
+* z-score calculations
+* Bronze file handling
+* Silver validation
+* feature calculations
+
+### Integration tests
+
+Validate the interaction between:
+
+```text
+Bronze → Silver → Gold → Features → ML
+```
+
+### Regression tests
+
+Protect known historical facts and previously fixed problems such as:
+
+* schema evolution
+* team-ID reuse
+* Jack Grealish's team transition
+* Gold referential integrity
+* known five-season outputs
+
+### Smoke tests
+
+Verify that the pipeline can be executed successfully at a high level.
+
+### Run the complete suite
+
+The project provides a single entry point:
+
+```bash
+python test_pipeline.py
+```
+
+Equivalent direct pytest usage:
 
 ```bash
 python -m pytest tests/ -v
 ```
 
-The tests cover areas such as:
-
-* pipeline output creation
-* warehouse table existence
-* schema-evolution handling
-* season-level scoring validation
-* team-history validation
-* real-world historical checks
-* Jack Grealish's 2021 transfer boundary
-
-The test suite is designed to protect against silent data-quality regressions.
-
----
-
-# Reproducibility
-
-The project supports three execution environments.
-
-| Environment                | Purpose                |
-| -------------------------- | ---------------------- |
-| Python virtual environment | Local development      |
-| Docker Compose             | Reproducible execution |
-| GitHub Actions             | Automated CI           |
-
-All three environments execute the same underlying Python project.
+The test suite is designed to protect against silent data-quality and modelling regressions.
 
 ---
 
@@ -684,7 +859,13 @@ football-intelligence-platform/
 │       └── ml.py
 │
 ├── tests/
-│   └── test_pipeline.py
+│   ├── conftest.py
+│   ├── test_bronze_silver.py
+│   ├── test_gold_features.py
+│   ├── test_ml.py
+│   ├── test_integration.py
+│   ├── test_regression_real_data.py
+│   └── test_smoke.py
 │
 ├── .dockerignore
 ├── .gitignore
@@ -694,6 +875,7 @@ football-intelligence-platform/
 ├── requirements.txt
 ├── run_pipeline.py
 ├── export_powerbi.py
+├── test_pipeline.py
 └── README.md
 ```
 
@@ -726,8 +908,6 @@ git clone https://github.com/garethmubaiwa/football-intelligence-platform.git
 cd football-intelligence-platform
 ```
 
----
-
 ## 2. Create a virtual environment
 
 ### macOS / Linux
@@ -741,8 +921,6 @@ python3 -m venv .venv
 ```powershell
 py -3.12 -m venv .venv
 ```
-
----
 
 ## 3. Activate the virtual environment
 
@@ -764,15 +942,11 @@ source .venv/bin/activate
 .venv\Scripts\activate
 ```
 
----
-
 ## 4. Upgrade pip
 
 ```bash
 python -m pip install --upgrade pip
 ```
-
----
 
 ## 5. Install the project
 
@@ -780,13 +954,7 @@ python -m pip install --upgrade pip
 pip install -e .
 ```
 
-The editable installation installs the package from `src/` and avoids requiring:
-
-```text
-PYTHONPATH=src
-```
-
----
+The editable installation installs the package from `src/`.
 
 ## 6. Verify dependencies
 
@@ -804,57 +972,64 @@ Dependencies OK
 
 # Running the project locally
 
-## Step 1 — Run the complete pipeline
+## Run the complete pipeline
 
 ```bash
 python run_pipeline.py
 ```
 
-This runs the main Bronze → Silver → Gold → Features → ML workflow.
+This executes the main:
 
----
+```text
+Bronze
+→ Silver
+→ Gold
+→ Feature Engineering
+→ ML
+```
 
-## Step 2 — Export Power BI data
+workflow.
+
+## Export Power BI data
 
 ```bash
 python export_powerbi.py
 ```
 
----
-
-## Step 3 — Validate DAX measures
+## Validate DAX measures
 
 ```bash
 python dax/validate_dax_measures.py
 ```
 
----
-
-## Step 4 — Run the test suite
+## Run the entire test suite
 
 ```bash
-python -m pytest tests/ -v
+python test_pipeline.py
 ```
 
 ---
 
 # Expected generated outputs
 
-After successful execution, generated artifacts should include files under:
+Generated artifacts are written under the project data directories.
+
+Typical outputs include:
 
 ```text
 data/
 ├── raw/
 ├── bronze/
 ├── silver/
-│   └── player_season_stats.parquet
+│   ├── player_season_stats.parquet
+│   └── rejected_rows.csv
 └── gold/
-    ├── warehouse.duckdb
-    ├── player_features.parquet
-    └── ML outputs
+    └── warehouse.duckdb
 ```
 
-Power BI outputs are written under:
+Feature and ML outputs depend on the current pipeline/orchestration implementation.
+
+Power BI exports are written under:
 
 ```text
 powerbi_export/
@@ -866,7 +1041,7 @@ Generated analytical data is intentionally excluded from Git by default.
 
 # Option 2 — Docker
 
-Docker provides a reproducible runtime environment without requiring the user to manually install the Python dependencies.
+Docker provides a reproducible runtime environment without requiring manual installation of the Python dependencies.
 
 ## Build the project image
 
@@ -874,15 +1049,11 @@ Docker provides a reproducible runtime environment without requiring the user to
 docker compose build
 ```
 
----
-
 ## Run the pipeline
 
 ```bash
 docker compose run --rm pipeline
 ```
-
----
 
 ## Run tests
 
@@ -890,15 +1061,11 @@ docker compose run --rm pipeline
 docker compose run --rm test
 ```
 
----
-
 ## Run the Power BI export
 
 ```bash
 docker compose run --rm export
 ```
-
----
 
 ## Run DAX validation
 
@@ -912,7 +1079,7 @@ Generated files are mounted back into the local project directories so they rema
 
 # Docker services
 
-The Compose configuration provides four one-off services:
+The Compose configuration provides the following one-off services:
 
 | Service    | Purpose                            |
 | ---------- | ---------------------------------- |
@@ -937,11 +1104,11 @@ docker compose run --rm dax
 For day-to-day development:
 
 ```text
-1. Create / activate .venv
+1. Activate .venv
 2. Install with pip install -e .
 3. Modify source code
 4. Run the pipeline
-5. Run pytest
+5. Run python test_pipeline.py
 6. Inspect results
 7. Commit changes
 8. Push to GitHub
@@ -957,7 +1124,7 @@ pip install -e .
 
 python run_pipeline.py
 
-python -m pytest tests/ -v
+python test_pipeline.py
 
 git status
 
@@ -980,18 +1147,20 @@ GitHub Actions runs the project automatically on:
 * pull requests targeting `master`
 * manual workflow execution
 
-The CI workflow performs:
+The CI workflow is designed to verify the same core project behavior as local development.
+
+Typical CI flow:
 
 ```text
 Checkout repository
         ↓
-Install Python 3.12
+Install Python
         ↓
 Install project
         ↓
 Run pipeline
         ↓
-Run pytest
+Run tests
         ↓
 Export Power BI data
         ↓
@@ -999,8 +1168,6 @@ Validate DAX
         ↓
 PASS / FAIL
 ```
-
-This means a successful GitHub Actions run verifies that the entire project can still execute from a clean environment.
 
 ---
 
@@ -1012,15 +1179,13 @@ The workflow is stored in:
 .github/workflows/ci.yml
 ```
 
-It is intentionally designed to execute the same commands used during local development.
+The goal is to detect broken transformations, failed tests, invalid warehouse relationships, and other regressions before changes are merged.
 
 ---
 
 # Data management
 
-The repository intentionally does **not** commit large generated datasets or analytical warehouse artifacts.
-
-Generated data is excluded through `.gitignore`.
+The repository intentionally does not commit large generated datasets or warehouse artifacts.
 
 Examples include:
 
@@ -1046,59 +1211,112 @@ This keeps the Git repository:
 
 # Design principles
 
-Several principles guide the implementation.
-
 ## Preserve raw data
 
-Bronze is intentionally close to the source representation.
+Bronze remains as close as possible to the original source representation.
 
-Transformations should happen downstream rather than overwriting the original ingestion layer.
+Transformations happen downstream rather than overwriting the ingestion layer.
 
 ---
 
 ## Treat schema evolution as normal
 
-Historical data rarely remains perfectly consistent.
+Historical datasets rarely remain perfectly consistent.
 
-The pipeline therefore checks source schemas rather than assuming that every season has identical columns.
+The pipeline therefore checks source schemas and explicitly handles missing historical columns.
 
 ---
 
 ## Do not confuse missing with zero
 
-Where the source lacks a historical metric, the value remains null.
+Where the source lacks a metric, the analytical value remains null.
 
-This protects analytical correctness.
+This protects the semantic meaning of the data.
 
 ---
 
 ## Do not blindly trust source IDs
 
-Source-system IDs are not automatically business keys.
+Source-system identifiers are not automatically business keys.
 
 Team identity is resolved through season-specific source metadata before warehouse modelling.
 
 ---
 
-## Separate transformation layers
+## Define the grain explicitly
 
-Bronze, Silver, and Gold have distinct responsibilities.
+The Gold fact table has a player-season grain:
 
-This improves:
+```text
+one player
++
+one season
+=
+one fact row
+```
 
-* debugging
-* lineage
-* testing
-* maintainability
-* analytical trust
+This grain is also the basis for deduplication and downstream ML analysis.
 
 ---
 
-## Test external reality
+## Separate feature engineering from modelling
 
-The project does not stop at schema and row-count tests.
+Feature Engineering creates the ML variables.
 
-Known Premier League facts are used to validate the outputs.
+The ML layer consumes those variables.
+
+```text
+Gold
+  ↓
+Feature Engineering
+  ↓
+ML
+```
+
+This keeps the analytical features reusable and allows the ML algorithm to change without rewriting the feature layer.
+
+---
+
+## Use position-relative analysis
+
+Football roles differ substantially by position.
+
+The clustering and outlier calculations therefore compare players within:
+
+```text
+GK
+DEF
+MID
+FWD
+```
+
+rather than treating all players as one homogeneous population.
+
+---
+
+## Preserve unavailable information
+
+The project does not fabricate unavailable historical metrics.
+
+For example, if xG/xA is not present in an older season:
+
+```text
+xG/xA = NULL
+```
+
+rather than:
+
+```text
+xG/xA = 0
+```
+
+---
+
+## Test against external reality
+
+The project does not rely solely on row counts and schema checks.
+
+Known historical Premier League facts are also used as regression tests.
 
 ---
 
@@ -1108,31 +1326,47 @@ The current architecture provides a foundation for several future extensions.
 
 ## More historical seasons
 
-Extend the pipeline to include additional seasons where compatible data is available.
+Extend the pipeline to compatible additional seasons.
 
-This would create longer player trend histories and improve multi-season feature engineering.
+This would provide longer player histories and improve trend-based analysis.
 
 ---
 
 ## Match-level data
 
-Add fixture and match-event data.
+Add fixture and event-level data.
 
-This would allow the warehouse to evolve from primarily season-level analysis toward:
+This could introduce a:
 
 ```text
 player × match
 ```
 
-and potentially support accumulating-snapshot and event-based fact tables.
+fact table and support more detailed event analysis.
+
+---
+
+## More advanced ML
+
+Potential extensions include:
+
+* cluster stability analysis
+* silhouette scoring
+* alternative clustering algorithms
+* Isolation Forest
+* player similarity scoring
+* predictive performance models
+* feature-importance analysis
+* position-specific predictive models
+* recruitment-oriented scoring
 
 ---
 
 ## dbt
 
-Introduce a dbt transformation layer on top of DuckDB.
+Introduce dbt transformations on top of DuckDB.
 
-Potential benefits:
+Potential benefits include:
 
 * SQL transformations
 * automated model testing
@@ -1144,7 +1378,7 @@ Potential benefits:
 
 ## Orchestration
 
-Introduce Airflow, Dagster, or another orchestration layer for scheduled refreshes.
+Introduce Airflow, Dagster, or another orchestration system for scheduled execution.
 
 Potential future workflow:
 
@@ -1170,23 +1404,9 @@ Data-quality checks
 
 ---
 
-## Improved ML
-
-Potential ML extensions include:
-
-* player trend-aware outlier detection
-* cluster stability analysis
-* model evaluation
-* feature importance analysis
-* player similarity scoring
-* position-specific models
-* recruitment-oriented scoring
-
----
-
 ## Power BI dashboard
 
-A future version can publish a full dashboard containing:
+A future dashboard can provide:
 
 * player performance
 * season trends
@@ -1200,7 +1420,7 @@ A future version can publish a full dashboard containing:
 
 # Reproducibility checklist
 
-A clean local reproduction should look like:
+Local reproduction:
 
 ```bash
 git clone https://github.com/garethmubaiwa/football-intelligence-platform.git
@@ -1219,7 +1439,7 @@ python export_powerbi.py
 
 python dax/validate_dax_measures.py
 
-python -m pytest tests/ -v
+python test_pipeline.py
 ```
 
 Docker reproduction:
